@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      # The ratings suite runs against a real Postgres on purpose: the
+      # one-vote-per-listener guarantee is a UNIQUE constraint, so a mocked
+      # client would only ever test the mock.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: radio
+          POSTGRES_PASSWORD: radio
+          POSTGRES_DB: radio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U radio"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TEST_DATABASE_URL: postgres://radio:radio@localhost:5432/radio_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - run: npm run build
+        env:
+          DATABASE_URL: postgres://radio:radio@localhost:5432/radio_test

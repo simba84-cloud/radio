@@ -3,6 +3,7 @@
 A web player for Radio Calico's lossless HLS stream, with a thumbs up/down
 rating for the track that's playing.
 
+[![CI](https://github.com/simba84-cloud/radio/actions/workflows/ci.yml/badge.svg)](https://github.com/simba84-cloud/radio/actions/workflows/ci.yml)
 ![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
@@ -51,6 +52,8 @@ Open <http://localhost:3002>. Check the wiring at
 <http://localhost:3002/api/health> — it should return
 `{"ok":true,"db":"up",...}`.
 
+To run the tests, see [Tests](#tests) below.
+
 ### Ports
 
 Non-default ports are deliberate: 3000, 5432 and 8080 were already taken on the
@@ -70,6 +73,11 @@ machine this was built on.
 | `npm run build`    | Production build                                  |
 | `npm run start`    | Serve the production build                        |
 | `npm run lint`     | ESLint (flat config)                              |
+| `npm run typecheck` | `next typegen && tsc --noEmit`                   |
+| `npm test`         | Run every test project once                       |
+| `npm run test:watch` | Vitest in watch mode                            |
+| `npm run test:coverage` | Coverage report (thresholds on `lib/`)       |
+| `npm run db:test:create` | Create the `radio_test` database             |
 | `npm run db:up`    | Start Postgres + Adminer                          |
 | `npm run db:down`  | Stop them (data is kept)                          |
 | `npm run db:psql`  | Open a `psql` shell                               |
@@ -103,6 +111,40 @@ or `title` is missing.
 `"accepted": true`. A repeat vote from the same listener — **including a change
 of mind** — returns `409`, still with the current tally, so the UI can settle on
 the truth rather than guess. Votes are final.
+
+## Tests
+
+```bash
+npm run db:test:create   # once — creates the radio_test database
+npm test
+```
+
+109 tests in three Vitest projects, split by what they need to run:
+
+| Project  | What | Environment |
+| -------- | ---- | ----------- |
+| `unit`   | Pure functions — track identity, feed parsing, formatting | node |
+| `db`     | Ratings invariants and route handlers, against real Postgres | node |
+| `client` | Components and hooks | jsdom |
+
+A file's name decides where it runs: **`*.db.test.ts` means it needs a
+database**, wherever it sits in the tree.
+
+**The DB tests use a real Postgres on purpose.** One-vote-per-listener is a
+`UNIQUE` constraint rather than a read-then-write, so the interesting test is
+whether two simultaneous votes from one listener produce exactly one row — and a
+mocked `pg` client could only ever confirm the mock. Those tests run against a
+separate `radio_test` database, and `test/setup-db.ts` refuses to start if
+pointed anywhere else, since it truncates between tests.
+
+CI runs the whole suite on every push and pull request, with a Postgres 17
+service container, alongside lint, typecheck and build.
+
+Audio output is the one thing this suite can't cover. jsdom has no media stack,
+so `HTMLMediaElement` and `MediaSource` are stubbed and hls.js is replaced by a
+fake. That makes the *decisions* testable — which variant gets pinned, which
+branch a browser takes, how fatal errors are handled — but nothing decodes.
+Confirm actual playback by ear.
 
 ## How it works
 
@@ -179,17 +221,30 @@ scaffolding that nothing reads yet.
 ## Project layout
 
 ```
-app/               routes and pages
-  components/      NowPlaying + RecentlyPlayed widgets, player bar,
-                   rating buttons, and the hls.js / metadata hooks
-  api/health/      DB connectivity check
-  api/ratings/     read and cast thumbs up/down votes
-lib/radio.ts       stream URLs and metadata helpers
-lib/ratings.ts     track identity + rating queries
-lib/db.ts          pooled pg client + query() helper
-db/init/           SQL run on first database creation
-docker-compose.yml Postgres + Adminer
+app/
+  layout.tsx           html/body shell, Montserrat + Open Sans, metadata
+  page.tsx             the 75px header + <RadioPlayer />
+  globals.css          Tailwind 4 @theme design tokens
+  api/health/          DB connectivity check
+  api/ratings/         read and cast thumbs up/down votes
+  components/          NowPlaying + RecentlyPlayed widgets, player bar,
+                       rating buttons, and the hls.js / metadata hooks
+lib/
+  radio.ts             stream URLs and metadata helpers
+  ratings.ts           track identity + rating queries
+  db.ts                pooled pg client + query() helper
+db/init/               SQL run on first database creation
+test/
+  setup-db.ts          the radio_test guard, migrations, truncation
+  setup-client.ts      jsdom media stubs and RTL cleanup
+vitest.config.mts      the three test projects
+docker-compose.yml     Postgres + Adminer
+.github/workflows/     CI, plus the Claude Code review workflows
 ```
+
+Tests sit beside the code they cover rather than in a `__tests__/` directory —
+`lib/ratings.test.ts` next to `lib/ratings.ts`, `route.db.test.ts` next to
+`route.ts`. The `.db.test.ts` suffix is what marks a file as needing Postgres.
 
 ## Design
 
@@ -222,8 +277,14 @@ mockup ends at the mint band.
 
 ## Development notes
 
-There is **no test framework** in this project — no `npm test`, no test runner.
-Verify changes with `npm run lint`, `npm run build`, and the running app.
+Run `npm test` (Vitest). The suite is in three projects — `unit` for pure
+functions, `db` for the ratings invariants against a real Postgres, `client` for
+components and hooks in jsdom. See [Tests](#tests) above.
+
+Also available: `npm run typecheck` and `npm run lint`. Typecheck runs
+`next typegen` first — `app/layout.tsx` is typed with `LayoutProps<"/">`, a
+global Next generates into `.next/types`, so a bare `tsc --noEmit` passes on a
+machine that has run the app and fails on a fresh clone.
 
 Audio playback can't be confirmed through browser-automation tooling, where
 MediaSource is unavailable and the player takes the native path that never

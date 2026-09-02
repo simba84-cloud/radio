@@ -7,20 +7,119 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm run db:up      # Postgres 17 + Adminer via docker compose (do this before dev)
-npm run dev        # Next.js on :3002  (3000 is taken on this machine)
-npm run build      # next build
-npm run lint       # eslint (flat config, eslint-config-next)
-npm run db:psql    # psql shell into the radio-postgres container
-npm run db:reset   # docker compose down -v && up  — DESTROYS the volume, re-runs db/init/*.sql
+npm run db:up          # Postgres 17 + Adminer via docker compose (do this before dev)
+npm run db:test:create # once — creates radio_test, which the db test project needs
+npm run dev            # Next.js on :3002  (3000 is taken on this machine)
+npm run build          # next build
+npm run lint           # eslint (flat config, eslint-config-next)
+npm run typecheck      # next typegen && tsc --noEmit  — typegen is not optional
+npm test               # vitest run — all three projects
+npm run test:watch     # vitest in watch mode
+npm run test:coverage  # v8 coverage; thresholds set only on lib/**
+npm run db:psql        # psql shell into the radio-postgres container
+npm run db:reset       # docker compose down -v && up  — DESTROYS the volume, re-runs db/init/*.sql
 ```
 
 First run needs `cp .env.example .env.local`. Verify wiring at
 http://localhost:3002/api/health (`{"ok":true,"db":"up",...}`); Adminer is on :8081,
 Postgres on :55432. All three ports are deliberately non-default.
 
-There is **no test framework** in this project — no `npm test`, no test runner in
-`package.json`. Verify changes with `npm run lint`, `npm run build`, and the running app.
+**`typecheck` runs `next typegen` first on purpose.** `app/layout.tsx` is typed
+`LayoutProps<"/">`, a global Next generates into `.next/types`, so a bare
+`tsc --noEmit` passes on any machine that has run the app and fails on a fresh
+checkout. That asymmetry broke CI once; don't "simplify" the script back.
+
+## File structure
+
+```
+app/
+  layout.tsx               html/body shell, Montserrat + Open Sans, metadata
+  page.tsx                 server component: the 75px header + <RadioPlayer />
+  globals.css              Tailwind 4 @theme design tokens
+  icon.png, apple-icon.png app icons (the logo mark)
+  api/health/route.ts      DB connectivity check
+  api/ratings/route.ts     GET tally / POST vote
+  components/
+    RadioPlayer.tsx        client root: the hidden <audio> + both hooks
+    NowPlaying.tsx         art, artist/track/album, quality, transport
+    PlayerBar.tsx          the 330x59 dark control pill
+    RecentlyPlayed.tsx     full-bleed mint band, last five tracks
+    TrackRating.tsx        thumbs up/down + running tally
+    icons.tsx              inline SVGs
+    use-hls-audio.ts       playback: hls.js, FLAC pinning, error recovery
+    use-now-playing.ts     10s metadata poll
+    use-stable-image.ts    flicker-free cover swap
+    volume-store.ts        useSyncExternalStore over localStorage
+lib/
+  radio.ts                 stream URLs, metadata shape + helpers
+  ratings.ts               trackRatingKey, ratingSummary, rateTrack
+  db.ts                    pooled pg client + query()
+db/init/                   *.sql — applied only on first volume creation
+test/
+  setup-db.ts              radio_test guard, migrations, truncate
+  setup-client.ts          jsdom media stubs, RTL cleanup
+vitest.config.mts          the three test projects
+.github/workflows/ci.yml   lint -> typecheck -> test -> build, on a PG 17 service
+```
+
+**Tests sit beside the code they cover** — `lib/ratings.test.ts`,
+`app/components/TrackRating.test.tsx`, `app/api/ratings/route.db.test.ts`. There
+is no `__tests__/` directory and adding one would leave it outside the configured
+`include` globs. Colocating inside `app/` is safe: Next routes only files named
+exactly `route.ts`/`page.tsx`, so `route.db.test.ts` never becomes an endpoint.
+
+`public/` still carries five unreferenced Create Next App SVGs (`next.svg`,
+`vercel.svg`, `file.svg`, `globe.svg`, `window.svg`) — scaffolding, like the
+`stations` table. Only `radio-calico-logo.png` is used.
+
+## Tests
+
+`vitest.config.mts` defines three projects, and which one a file lands in is
+decided by its name and path:
+
+| Project  | Files | Env | Needs |
+| -------- | ----- | --- | ----- |
+| `unit`   | `lib/**/*.test.ts` | node | nothing |
+| `db`     | `**/*.db.test.ts` (anywhere) | node | Postgres |
+| `client` | `app/**/*.test.ts(x)` | jsdom | nothing |
+
+**`.db.test.ts` is the marker that a file needs a database** — route-handler
+tests use it too, since they call through to real queries. Those run against
+`radio_test`, never the dev database: `test/setup-db.ts` throws unless the
+database is named `radio_test`, applies `db/init/*.sql` itself, and truncates
+between tests. Create it once with `npm run db:test:create`.
+
+Things that will bite you when adding tests:
+
+- `lib/db.ts` reads `DATABASE_URL` at module load and caches the pool on
+  `globalThis`, so the env var must be set in a setupFile, not inside a test —
+  and the pool needs `end()`ing in teardown or vitest never exits.
+- `volume-store.ts` caches volume in a module-level variable. Tests that read it
+  must `vi.resetModules()` and re-import, or they inherit the previous test's value.
+- `use-now-playing` reschedules itself with `setTimeout`. Install fake timers
+  *before* rendering; switching afterwards leaves the first real timer running
+  outside the test's control.
+- jsdom has no media stack — `HTMLMediaElement.play` and `MediaSource` are
+  stubbed in `test/setup-client.ts`. hls.js is replaced wholesale by a fake in
+  `use-hls-audio.test.tsx`.
+
+Do not "simplify" the DB tests into mocks. The one-vote-per-listener guarantee
+is a UNIQUE constraint; a mocked `pg` would test the mock and nothing else — the
+tests that matter fire ten simultaneous votes and assert exactly one row lands.
+
+Coverage thresholds are set on `lib/**` only. That is deliberate: a global number
+pushes toward snapshotting markup whose source of truth is a PNG mockup, which
+churns on every styling change and asserts nothing. `icons.tsx` reads low in the
+report for the same reason and is fine.
+
+When adding a test for a bug, check it fails against the unfixed code. Three
+guards here were confirmed that way — reordering the `isSupported`/`canPlayType`
+probe, dropping the FLAC level pin, and removing whitespace collapsing from
+`trackRatingKey` each fail the tests that cover them.
+
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, tests and build on every
+push and PR, with a Postgres 17 service container; the `db` project runs there
+for real. `claude.yml` and `claude-code-review.yml` are the GitHub App's.
 
 ## Architecture
 
@@ -91,5 +190,10 @@ README.md has the full table; check it before "fixing" a token back to the guide
 ## Verifying playback
 
 Audio cannot be confirmed through the Chrome automation tools — MediaSource is
-unavailable there, so the player takes the native path and never plays. Check playback
-by hand, or assert on state/logs rather than sound.
+unavailable there, so the player takes the native path and never plays. Nor does
+the test suite prove sound: jsdom has no media stack, so `use-hls-audio.test.tsx`
+asserts on *decisions* (which level is pinned, which branch a browser takes, how
+fatal errors are handled) against a fake hls.js, and nothing decodes.
+
+So the branch logic is covered by tests and the audio itself is not. Changing
+that file, trust the suite for the wiring and still listen once by hand.
