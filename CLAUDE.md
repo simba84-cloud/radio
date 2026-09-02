@@ -11,6 +11,9 @@ npm run db:up      # Postgres 17 + Adminer via docker compose (do this before de
 npm run dev        # Next.js on :3002  (3000 is taken on this machine)
 npm run build      # next build
 npm run lint       # eslint (flat config, eslint-config-next)
+npm run typecheck  # tsc --noEmit
+npm test           # vitest run — all three projects
+npm run test:watch # vitest in watch mode
 npm run db:psql    # psql shell into the radio-postgres container
 npm run db:reset   # docker compose down -v && up  — DESTROYS the volume, re-runs db/init/*.sql
 ```
@@ -19,8 +22,39 @@ First run needs `cp .env.example .env.local`. Verify wiring at
 http://localhost:3002/api/health (`{"ok":true,"db":"up",...}`); Adminer is on :8081,
 Postgres on :55432. All three ports are deliberately non-default.
 
-There is **no test framework** in this project — no `npm test`, no test runner in
-`package.json`. Verify changes with `npm run lint`, `npm run build`, and the running app.
+## Tests
+
+`vitest.config.mts` defines three projects, and which one a file lands in is
+decided by its name and path:
+
+| Project  | Files | Env | Needs |
+| -------- | ----- | --- | ----- |
+| `unit`   | `lib/**/*.test.ts` | node | nothing |
+| `db`     | `**/*.db.test.ts` (anywhere) | node | Postgres |
+| `client` | `app/**/*.test.ts(x)` | jsdom | nothing |
+
+**`.db.test.ts` is the marker that a file needs a database** — route-handler
+tests use it too, since they call through to real queries. Those run against
+`radio_test`, never the dev database: `test/setup-db.ts` throws unless the
+database is named `radio_test`, applies `db/init/*.sql` itself, and truncates
+between tests. Create it once with `npm run db:test:create`.
+
+Things that will bite you when adding tests:
+
+- `lib/db.ts` reads `DATABASE_URL` at module load and caches the pool on
+  `globalThis`, so the env var must be set in a setupFile, not inside a test —
+  and the pool needs `end()`ing in teardown or vitest never exits.
+- `volume-store.ts` caches volume in a module-level variable. Tests that read it
+  must `vi.resetModules()` and re-import, or they inherit the previous test's value.
+- `use-now-playing` reschedules itself with `setTimeout`. Install fake timers
+  *before* rendering; switching afterwards leaves the first real timer running
+  outside the test's control.
+- jsdom has no media stack — `HTMLMediaElement.play` and `MediaSource` are
+  stubbed in `test/setup-client.ts`. hls.js is replaced wholesale by a fake in
+  `use-hls-audio.test.tsx`.
+
+Do not "simplify" the DB tests into mocks. The one-vote-per-listener guarantee
+is a UNIQUE constraint; a mocked `pg` would test the mock and nothing else.
 
 ## Architecture
 

@@ -70,6 +70,11 @@ machine this was built on.
 | `npm run build`    | Production build                                  |
 | `npm run start`    | Serve the production build                        |
 | `npm run lint`     | ESLint (flat config)                              |
+| `npm run typecheck` | `tsc --noEmit`                                   |
+| `npm test`         | Run every test project once                       |
+| `npm run test:watch` | Vitest in watch mode                            |
+| `npm run test:coverage` | Coverage report (thresholds on `lib/`)       |
+| `npm run db:test:create` | Create the `radio_test` database             |
 | `npm run db:up`    | Start Postgres + Adminer                          |
 | `npm run db:down`  | Stop them (data is kept)                          |
 | `npm run db:psql`  | Open a `psql` shell                               |
@@ -103,6 +108,37 @@ or `title` is missing.
 `"accepted": true`. A repeat vote from the same listener — **including a change
 of mind** — returns `409`, still with the current tally, so the UI can settle on
 the truth rather than guess. Votes are final.
+
+## Tests
+
+```bash
+npm run db:test:create   # once — creates the radio_test database
+npm test
+```
+
+109 tests in three Vitest projects, split by what they need to run:
+
+| Project  | What | Environment |
+| -------- | ---- | ----------- |
+| `unit`   | Pure functions — track identity, feed parsing, formatting | node |
+| `db`     | Ratings invariants and route handlers, against real Postgres | node |
+| `client` | Components and hooks | jsdom |
+
+A file's name decides where it runs: **`*.db.test.ts` means it needs a
+database**, wherever it sits in the tree.
+
+**The DB tests use a real Postgres on purpose.** One-vote-per-listener is a
+`UNIQUE` constraint rather than a read-then-write, so the interesting test is
+whether two simultaneous votes from one listener produce exactly one row — and a
+mocked `pg` client could only ever confirm the mock. Those tests run against a
+separate `radio_test` database, and `test/setup-db.ts` refuses to start if
+pointed anywhere else, since it truncates between tests.
+
+Audio output is the one thing this suite can't cover. jsdom has no media stack,
+so `HTMLMediaElement` and `MediaSource` are stubbed and hls.js is replaced by a
+fake. That makes the *decisions* testable — which variant gets pinned, which
+branch a browser takes, how fatal errors are handled — but nothing decodes.
+Confirm actual playback by ear.
 
 ## How it works
 
@@ -188,6 +224,8 @@ lib/radio.ts       stream URLs and metadata helpers
 lib/ratings.ts     track identity + rating queries
 lib/db.ts          pooled pg client + query() helper
 db/init/           SQL run on first database creation
+test/              vitest setup: DB harness and jsdom media stubs
+vitest.config.mts  the three test projects
 docker-compose.yml Postgres + Adminer
 ```
 
@@ -222,8 +260,11 @@ mockup ends at the mint band.
 
 ## Development notes
 
-There is **no test framework** in this project — no `npm test`, no test runner.
-Verify changes with `npm run lint`, `npm run build`, and the running app.
+Run `npm test` (Vitest). The suite is in three projects — `unit` for pure
+functions, `db` for the ratings invariants against a real Postgres, `client` for
+components and hooks in jsdom. See [Tests](#tests) above.
+
+Also available: `npm run typecheck` (`tsc --noEmit`) and `npm run lint`.
 
 Audio playback can't be confirmed through browser-automation tooling, where
 MediaSource is unavailable and the player takes the native path that never
