@@ -3,6 +3,7 @@
 A web player for Radio Calico's lossless HLS stream, with a thumbs up/down
 rating for the track that's playing.
 
+[![CI](https://github.com/simba84-cloud/radio/actions/workflows/ci.yml/badge.svg)](https://github.com/simba84-cloud/radio/actions/workflows/ci.yml)
 ![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
@@ -51,6 +52,8 @@ Open <http://localhost:3002>. Check the wiring at
 <http://localhost:3002/api/health> — it should return
 `{"ok":true,"db":"up",...}`.
 
+To run the tests, see [Tests](#tests) below.
+
 ### Ports
 
 Non-default ports are deliberate: 3000, 5432 and 8080 were already taken on the
@@ -70,7 +73,7 @@ machine this was built on.
 | `npm run build`    | Production build                                  |
 | `npm run start`    | Serve the production build                        |
 | `npm run lint`     | ESLint (flat config)                              |
-| `npm run typecheck` | `tsc --noEmit`                                   |
+| `npm run typecheck` | `next typegen && tsc --noEmit`                   |
 | `npm test`         | Run every test project once                       |
 | `npm run test:watch` | Vitest in watch mode                            |
 | `npm run test:coverage` | Coverage report (thresholds on `lib/`)       |
@@ -133,6 +136,9 @@ whether two simultaneous votes from one listener produce exactly one row — and
 mocked `pg` client could only ever confirm the mock. Those tests run against a
 separate `radio_test` database, and `test/setup-db.ts` refuses to start if
 pointed anywhere else, since it truncates between tests.
+
+CI runs the whole suite on every push and pull request, with a Postgres 17
+service container, alongside lint, typecheck and build.
 
 Audio output is the one thing this suite can't cover. jsdom has no media stack,
 so `HTMLMediaElement` and `MediaSource` are stubbed and hls.js is replaced by a
@@ -215,19 +221,30 @@ scaffolding that nothing reads yet.
 ## Project layout
 
 ```
-app/               routes and pages
-  components/      NowPlaying + RecentlyPlayed widgets, player bar,
-                   rating buttons, and the hls.js / metadata hooks
-  api/health/      DB connectivity check
-  api/ratings/     read and cast thumbs up/down votes
-lib/radio.ts       stream URLs and metadata helpers
-lib/ratings.ts     track identity + rating queries
-lib/db.ts          pooled pg client + query() helper
-db/init/           SQL run on first database creation
-test/              vitest setup: DB harness and jsdom media stubs
-vitest.config.mts  the three test projects
-docker-compose.yml Postgres + Adminer
+app/
+  layout.tsx           html/body shell, Montserrat + Open Sans, metadata
+  page.tsx             the 75px header + <RadioPlayer />
+  globals.css          Tailwind 4 @theme design tokens
+  api/health/          DB connectivity check
+  api/ratings/         read and cast thumbs up/down votes
+  components/          NowPlaying + RecentlyPlayed widgets, player bar,
+                       rating buttons, and the hls.js / metadata hooks
+lib/
+  radio.ts             stream URLs and metadata helpers
+  ratings.ts           track identity + rating queries
+  db.ts                pooled pg client + query() helper
+db/init/               SQL run on first database creation
+test/
+  setup-db.ts          the radio_test guard, migrations, truncation
+  setup-client.ts      jsdom media stubs and RTL cleanup
+vitest.config.mts      the three test projects
+docker-compose.yml     Postgres + Adminer
+.github/workflows/     CI, plus the Claude Code review workflows
 ```
+
+Tests sit beside the code they cover rather than in a `__tests__/` directory —
+`lib/ratings.test.ts` next to `lib/ratings.ts`, `route.db.test.ts` next to
+`route.ts`. The `.db.test.ts` suffix is what marks a file as needing Postgres.
 
 ## Design
 
@@ -264,7 +281,10 @@ Run `npm test` (Vitest). The suite is in three projects — `unit` for pure
 functions, `db` for the ratings invariants against a real Postgres, `client` for
 components and hooks in jsdom. See [Tests](#tests) above.
 
-Also available: `npm run typecheck` (`tsc --noEmit`) and `npm run lint`.
+Also available: `npm run typecheck` and `npm run lint`. Typecheck runs
+`next typegen` first — `app/layout.tsx` is typed with `LayoutProps<"/">`, a
+global Next generates into `.next/types`, so a bare `tsc --noEmit` passes on a
+machine that has run the app and fails on a fresh clone.
 
 Audio playback can't be confirmed through browser-automation tooling, where
 MediaSource is unavailable and the player takes the native path that never
