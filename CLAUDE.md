@@ -18,6 +18,8 @@ npm run test:watch     # vitest in watch mode
 npm run test:coverage  # v8 coverage; thresholds set only on lib/**
 npm run db:psql        # psql shell into the radio-postgres container
 npm run db:reset       # docker compose down -v && up  — DESTROYS the volume, re-runs db/init/*.sql
+npm run docker:dev     # dev release in a container, hot reload on :3002 (stop `npm run dev` first)
+npm run docker:prod    # prod release: standalone app + radio-db, needs .env.prod
 ```
 
 First run needs `cp .env.example .env.local`. Verify wiring at
@@ -176,11 +178,29 @@ docker exec -i radio-postgres psql -U radio -d radio -v ON_ERROR_STOP=1 < db/ini
 
 `stations` (001/002) is leftover placeholder scaffolding nothing reads.
 
+## Docker
+
+`Dockerfile` has `dev` and `prod` targets; see README "Docker". Things that look
+removable and aren't:
+
+- `next.config.ts` enables `output: "standalone"` only when `NEXT_OUTPUT=standalone`
+  (set by the image build), so host `npm run build`/`start` behave as before.
+- `compose.dev.yml` runs `next dev --webpack` with `WATCHPACK_POLLING`. Bind mounts
+  from this Mac (Colima, `mountInotify: false`) deliver no file events, and
+  Turbopack's `watchOptions.pollIntervalMs` did not pick up edits when tested.
+- The prod image is `read_only` with a tmpfs on `.next/cache`; anything that writes
+  elsewhere at runtime will fail there, not in dev.
+- `radio-db` bakes in `db/init`, so the same first-volume-only rule applies in prod.
+
 ## Styling
 
 Design tokens are Tailwind 4 `@theme` values in `app/globals.css`, sourced from
 `RadioCalico_Style_Guide.txt` (palette, Montserrat/Open Sans, type scale) with
 measurements sampled from `RadioCalicoLayout.png`.
+
+## Style guide 
+- A text version of the styling guide for the webpage is at ~/radio/RadioCalico_Style_Guide.txt
+- The Radio Calico logo is at  ~/radio/RadioCalicoLogo.png
 
 **Where the mockup and the style guide disagree, the mockup wins** — the nav is
 graphite `#494949` not teal, the page ground is `#f9f9fb` not white, player controls

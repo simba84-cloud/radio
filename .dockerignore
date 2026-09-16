@@ -1,0 +1,28 @@
+# Rebuilt inside the image; host copies carry darwin-native binaries.
+node_modules
+.next
+coverage
+*.tsbuildinfo
+next-env.d.ts
+
+# Secrets and local config never go into an image.
+.env*
+!.env.example
+
+.git
+.github
+.DS_Store
+npm-debug.log*
+
+# Design references — not served by the app.
+RadioCalicoStyle.zip
+RadioCalicoLayout.png
+RadioCalicoLogoTM.png
+RadioCalico_Style_Guide.txt
+stream_URL.txt
+
+# Docker's own files.
+Dockerfile
+.dockerignore
+compose*.yml
+docker-compose*.yml

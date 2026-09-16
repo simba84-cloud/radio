@@ -15,7 +15,11 @@
     "db:down": "docker compose down",
     "db:psql": "docker exec -it radio-postgres psql -U radio -d radio",
     "db:reset": "docker compose down -v && docker compose up -d",
-    "db:test:create": "docker exec radio-postgres psql -U radio -d postgres -tAc \"select 1 from pg_database where datname='radio_test'\" | grep -q 1 || docker exec radio-postgres createdb -U radio radio_test"
+    "db:test:create": "docker exec radio-postgres psql -U radio -d postgres -tAc \"select 1 from pg_database where datname='radio_test'\" | grep -q 1 || docker exec radio-postgres createdb -U radio radio_test",
+    "docker:dev": "docker compose -f docker-compose.yml -f compose.dev.yml up --build --renew-anon-volumes",
+    "docker:dev:down": "docker compose -f docker-compose.yml -f compose.dev.yml down",
+    "docker:prod": "docker compose -f compose.prod.yml --env-file .env.prod up -d --build",
+    "docker:prod:down": "docker compose -f compose.prod.yml --env-file .env.prod down"
   },
   "dependencies": {
     "hls.js": "^1.7.1",

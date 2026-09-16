@@ -1,0 +1,36 @@
+# Dev release: Next's dev server in a container, hot-reloading the bind-mounted
+# source, on top of the Postgres + Adminer services in docker-compose.yml.
+#
+#   npm run docker:dev
+#
+# It shares radio-postgres with `npm run db:up`, so data carries over between
+# running Next on the host and in the container.
+services:
+  app:
+    build:
+      context: .
+      target: dev
+    image: radio:dev
+    container_name: radio-app-dev
+    # A bind mount from a macOS host doesn't reliably deliver file events into
+    # the container (Colima's default mountInotify: false delivers none), so
+    # the watcher has to poll. Turbopack ignored watchOptions.pollIntervalMs in
+    # testing; webpack's watchpack honours WATCHPACK_POLLING and reloads in ~2s.
+    command: ["npx", "next", "dev", "--webpack", "--hostname", "0.0.0.0", "--port", "3002"]
+    ports:
+      - "3002:3002"
+    environment:
+      # Beats DATABASE_URL in the mounted .env.local — Next never overrides a
+      # variable that's already set in the environment.
+      DATABASE_URL: postgres://radio:radio@postgres:5432/radio
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - .:/app
+      # Keep the image's Linux node_modules and a container-owned .next; the
+      # host's copies are built for macOS. Renewed on each `docker:dev` (-V)
+      # so a lockfile change isn't shadowed by a stale volume.
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      postgres:
+        condition: service_healthy
