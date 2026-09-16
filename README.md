@@ -35,7 +35,8 @@ screenshot.</sub>
 ## Requirements
 
 - **Node.js 20.9+** (developed on 24.x)
-- **Docker** — for Postgres and Adminer
+- **Docker** — for Postgres and Adminer, and the optional
+  [containerized releases](#docker)
 
 ## Quick start
 
@@ -82,6 +83,84 @@ machine this was built on.
 | `npm run db:down`  | Stop them (data is kept)                          |
 | `npm run db:psql`  | Open a `psql` shell                               |
 | `npm run db:reset` | **Destroy the volume** and re-run `db/init/*.sql` |
+| `npm run docker:dev` | Dev release in Docker, hot reload on :3002     |
+| `npm run docker:dev:down` | Stop it, plus Postgres + Adminer (data kept) |
+| `npm run docker:prod` | Build and start the prod release (detached)    |
+| `npm run docker:prod:down` | Stop the prod release (data kept)         |
+
+## Docker
+
+One `Dockerfile` builds both releases from shared stages.
+
+| Release | Target | Runs | Compose file |
+| ------- | ------ | ---- | ------------ |
+| dev  | `dev`  | `next dev`, source bind-mounted, hot reload | `docker-compose.yml` + `compose.dev.yml` |
+| prod | `prod` | standalone `server.js`, non-root, read-only filesystem | `compose.prod.yml` |
+
+### Dev
+
+```bash
+npm run docker:dev      # foreground; Ctrl-C to stop
+```
+
+Adds an app container to the same Postgres + Adminer that `npm run db:up`
+starts, so it shares their data and ports: <http://localhost:3002>, Adminer on
+:8081. Stop `npm run dev` first — both want :3002.
+
+Edits on the host reload in about two seconds. The container runs webpack with
+polling rather than Turbopack: file events don't cross a bind mount from macOS
+(Colima's default `mountInotify: false` delivers none), and Turbopack's
+`watchOptions.pollIntervalMs` didn't pick up edits when tried.
+
+`node_modules` and `.next` live in anonymous volumes, because the host's copies
+are built for macOS. `docker:dev` renews them on each start, so after changing
+dependencies just run it again.
+
+### Prod
+
+```bash
+cp .env.prod.example .env.prod   # set POSTGRES_PASSWORD
+npm run docker:prod              # http://localhost:3002
+```
+
+This runs two images and needs nothing else from the repo:
+
+- `radio` — Next's `output: "standalone"` build: `server.js`, the traced subset
+  of `node_modules`, `public/` and `.next/static`. About 42MB on top of
+  `node:24-alpine`. Its healthcheck calls `/api/health`, so it only reports
+  healthy once the database answers too.
+- `radio-db` — `postgres:17-alpine` with `db/init/*.sql` copied in, so the host
+  needs no checkout to mount them from.
+
+Postgres publishes no port; only the app reaches it. Settings live in
+`.env.prod` (see `.env.prod.example`): `POSTGRES_PASSWORD` is required, and
+because it's interpolated into `DATABASE_URL`, percent-encode any `: / @ ? #`
+in it. `APP_PORT` changes the host port.
+
+Standalone output is switched on only when `NEXT_OUTPUT=standalone`, which the
+image build sets; a plain `npm run build` is unchanged, and `npm run start`
+still works.
+
+To deploy to another host, build and push under a registry prefix, then copy
+`compose.prod.yml` and `.env.prod` over and start it there:
+
+```bash
+# here, with REGISTRY=ghcr.io/you/ and TAG=1.0.0 in .env.prod
+docker compose -f compose.prod.yml --env-file .env.prod build
+docker compose -f compose.prod.yml --env-file .env.prod push
+# on the host
+docker compose -f compose.prod.yml --env-file .env.prod up -d --no-build
+```
+
+The same rule as local applies to the schema: `db/init/*.sql` runs only when
+the `pgdata` volume is first created. A later file is **not** applied to an
+existing deployment; run it by hand:
+
+```bash
+docker compose -f compose.prod.yml --env-file .env.prod exec -T postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+  < db/init/00N_x.sql
+```
 
 ## API
 
@@ -239,6 +318,11 @@ test/
   setup-client.ts      jsdom media stubs and RTL cleanup
 vitest.config.mts      the three test projects
 docker-compose.yml     Postgres + Adminer
+Dockerfile             dev and prod image targets
+compose.dev.yml        dev release: app container over docker-compose.yml
+compose.prod.yml       prod release: standalone app + radio-db
+db/Dockerfile          radio-db: Postgres 17 with db/init baked in
+.env.prod.example      settings template for compose.prod.yml
 .github/workflows/     CI, plus the Claude Code review workflows
 ```
 

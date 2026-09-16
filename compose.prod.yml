@@ -1,0 +1,52 @@
+# Prod release: the standalone Next server and Postgres with the schema baked
+# in. Self-contained — it needs these two images and an env file, not the repo.
+#
+#   cp .env.prod.example .env.prod   # set POSTGRES_PASSWORD
+#   npm run docker:prod
+#
+# To deploy elsewhere, set REGISTRY/TAG, `docker compose ... build && push`,
+# then copy this file and .env.prod to the host and `up -d` there.
+name: radio-prod
+
+services:
+  postgres:
+    build: ./db
+    image: ${REGISTRY:-}radio-db:${TAG:-latest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-radio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:-radio}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No published port: only the app reaches the database.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      target: prod
+    image: ${REGISTRY:-}radio:${TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3002}:3000"
+    environment:
+      # The password is interpolated into a URL: percent-encode any of : / @ ? #
+      DATABASE_URL: postgres://${POSTGRES_USER:-radio}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-radio}
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache:uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
